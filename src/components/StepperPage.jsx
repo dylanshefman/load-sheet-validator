@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import * as dfd from 'danfojs'
 import { Box, Button, Typography, Grid, Select, MenuItem, FormControl, InputLabel, Paper, LinearProgress, Card, CardContent, CircularProgress, Stack } from '@mui/material'
 import PreviewTable from './PreviewTable'
@@ -24,6 +24,9 @@ export default function StepperPage({ initialState, onBack }) {
   const [running, setRunning] = useState(false)
   const suffixUsed = initialState.suffixUsed !== undefined ? initialState.suffixUsed : true
   const totalSteps = suffixUsed ? 5 : 4
+
+  // refs to each step section so we can scroll them into view when activated
+  const sectionRefs = useRef({})
 
   const stepDescriptions = {
     1: 'Point type mapping — map each unique uploaded type to KODE types (Number/Bool/Str/-).',
@@ -489,6 +492,18 @@ export default function StepperPage({ initialState, onBack }) {
   // whenever the user advances to a step, run that step's checks sequentially
   useEffect(() => {
     if (step === 1) return
+    // on step change, if we're entering a visible step section (2..5), scroll its header to top
+    try {
+      if (step >= 2 && step <= 5) {
+        const el = sectionRefs.current && sectionRefs.current[step]
+        if (el && typeof el.scrollIntoView === 'function') {
+          // smooth pan so header is at top
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }
+    } catch (e) {
+      // ignore scroll errors
+    }
     const checks = getChecksForStep(step)
     const reset = {}
     checks.forEach(c => { reset[c.key] = { status: 'pending' } })
@@ -630,7 +645,7 @@ export default function StepperPage({ initialState, onBack }) {
           {/* Render all step sections on a single page; each step has its own check cards that are revealed when the user advances to that step. */}
           <Box sx={{ mt: 2 }}>
             {[2,3,4,5].filter(s => s <= totalSteps).map(s => (
-              <Box key={`section-${s}`} sx={{ mb: 2 }}>
+              <Box key={`section-${s}`} ref={el => { sectionRefs.current[s] = el }} sx={{ mb: 2 }}>
                 <Typography variant="subtitle1">Step {s}: {stepDescriptions[s]}</Typography>
                 <Stack spacing={1} sx={{ mt: 1 }}>
                   {getChecksForStep(s).map((c) => (
@@ -663,11 +678,53 @@ export default function StepperPage({ initialState, onBack }) {
         </CardContent>
       </Card>
 
-        {warning && (
-          <Box sx={{ mt: 2 }}>
-            <WarningPanel warning={warning} spCol={mapping.slotpath} pnCol={mapping.pointName} fCol={mapping.field} />
-          </Box>
-        )}
+      {/* compute whether current step's checks have all passed (and no errors) so we can show the success box */}
+      {/* Note: getChecksForStep is synchronous and reads current df state */}
+      {(() => {
+        try {
+          const currentChecks = getChecksForStep(step)
+          const allPassed = currentChecks.length ? currentChecks.every(c => checkStatuses[c.key] && checkStatuses[c.key].status === 'passed') : false
+          const showSuccess = !errors && !running && allPassed
+
+          if (warning) {
+            return (
+              <Box sx={{ mt: 2 }}>
+                <WarningPanel warning={warning} spCol={mapping.slotpath} pnCol={mapping.pointName} fCol={mapping.field} />
+                {showSuccess && (
+                  <Box sx={{ mt: 2 }}>
+                    <Paper sx={{ p: 2, background: '#e8f5e9', color: '#1b5e20', border: '1px solid #a5d6a7' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                        <Typography variant="body1" sx={{ fontWeight: 600 }}>All checks passed</Typography>
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          <Button variant="contained" color="success" onClick={() => { /* noop for now */ }}>Proceed to export</Button>
+                        </Box>
+                      </Box>
+                    </Paper>
+                  </Box>
+                )}
+              </Box>
+            )
+          }
+
+          // no warning: render success box just below the check container
+          return (
+            <React.Fragment>
+              {showSuccess && (
+                <Box sx={{ mt: 2 }}>
+                  <Paper sx={{ p: 2, background: '#e8f5e9', color: '#1b5e20', border: '1px solid #a5d6a7' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>All checks passed</Typography>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button variant="contained" color="success" onClick={() => { /* noop for now */ }}>Proceed to export</Button>
+                      </Box>
+                    </Box>
+                  </Paper>
+                </Box>
+              )}
+            </React.Fragment>
+          )
+        } catch (e) { return null }
+      })()}
 
       <Box sx={{ mt: 2 }}>
         <Card variant="outlined">
