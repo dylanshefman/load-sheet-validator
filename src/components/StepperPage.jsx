@@ -7,6 +7,7 @@ import { decodeSlotpath } from '../utils/decode'
 import Papa from 'papaparse'
 import CheckCard from './CheckCard'
 import { mkKey, buildErrorForCheck, getRecordsArray, exportCSV, downloadOffendingRows, downloadCleanedTable } from './stepperHelpers'
+import WarningPanel from './WarningPanel'
 
 const KODE_OPTIONS = ['Number', 'Bool', 'Str', '-']
 
@@ -18,6 +19,7 @@ export default function StepperPage({ initialState, onBack }) {
   const [kodeMap, setKodeMap] = useState(null)
   const [fieldsRows, setFieldsRows] = useState([])
   const [errors, setErrors] = useState(null)
+  const [warning, setWarning] = useState(null)
   const [checkStatuses, setCheckStatuses] = useState({}) // key -> { status: 'pending'|'running'|'passed'|'failed', detail }
   const [running, setRunning] = useState(false)
   const suffixUsed = initialState.suffixUsed !== undefined ? initialState.suffixUsed : true
@@ -492,9 +494,103 @@ export default function StepperPage({ initialState, onBack }) {
     checks.forEach(c => { reset[c.key] = { status: 'pending' } })
     setCheckStatuses(prev => ({ ...prev, ...reset }))
     ;(async () => {
+      // clear previous errors and warnings when starting a new set of checks
       setErrors(null)
+      setWarning(null)
       const ok = await runChecksSequence(checks)
       if (ok) {
+        // only compute duplicate-field warnings once we've completed the final step
+        if (step === totalSteps) {
+          try {
+            const recordsArr = getRecordsArray(df)
+            const dCol = mapping.deviceName
+            const fCol = mapping.field
+            const sCol = mapping.suffix
+            const useSuffix = !!suffixUsed
+
+            // group by device -> then detect duplicate fields per device
+            const byDevice = {}
+            recordsArr.forEach((r, i) => {
+              const dev = r[dCol]
+              byDevice[dev] = byDevice[dev] || []
+              byDevice[dev].push({ row: i+1, record: r })
+            })
+            const offendingByDevice = []
+            Object.entries(byDevice).forEach(([dev, arr]) => {
+              // build a key that includes suffix if suffixes are used
+              const map = {}
+              arr.forEach(({ row, record }) => {
+                const fieldVal = record[fCol]
+                // '!' is never considered duplicate
+                if (fieldVal === '!' || fieldVal.includes("alarm")) return
+                const suffixVal = record[sCol]
+                const key = useSuffix ? `${String(record[dCol] || dev)}|||${String(fieldVal || '')}|||${String(suffixVal || '')}` : `${String(record[dCol] || dev)}|||${String(fieldVal || '')}`
+                map[key] = map[key] || []
+                map[key].push({ row, record })
+              })
+              // Now find duplicates: when key has more than 1 entry OR (suffixes on and there exist two rows with same device+field and both have no suffix)
+              let deviceDuplicates = []
+              // If suffixes used, also need to consider duplicate across device+field when both suffix empty
+              const deviceFieldGroups = {}
+              arr.forEach(({ row, record }) => {
+                const fieldVal = record[fCol]
+                if (fieldVal === '!' || fieldVal.includes("alarm")) return
+                const dkey = `${String(record[dCol] || dev)}|||${String(fieldVal || '')}`
+                deviceFieldGroups[dkey] = deviceFieldGroups[dkey] || []
+                deviceFieldGroups[dkey].push({ row, record })
+              })
+
+              Object.entries(map).forEach(([k, list]) => {
+                if (list.length > 1) {
+                  // we have duplicate key entries; extract field-based grouping for display
+                  deviceDuplicates.push(...list)
+                }
+              })
+
+              if (useSuffix) {
+                // find device+field groups where multiple rows have empty suffix
+                Object.values(deviceFieldGroups).forEach(list => {
+                  const empties = list.filter(x => !x.record[sCol])
+                  if (empties.length > 1) {
+                    deviceDuplicates.push(...empties)
+                  }
+                })
+              }
+
+              if (deviceDuplicates.length) {
+                // de-duplicate entries by row (preserve first occurrence order) to avoid duplicate React keys
+                const seenRows = new Set()
+                const deduped = []
+                deviceDuplicates.forEach(it => {
+                  if (!seenRows.has(it.row)) {
+                    seenRows.add(it.row)
+                    deduped.push(it)
+                  }
+                })
+                // per requirement: if a device has multiple duplicate fields, display all rows with the same field in succession
+                // we'll sort by field and then by row
+                deduped.sort((a, b) => {
+                  const fa = String(a.record[fCol] || '')
+                  const fb = String(b.record[fCol] || '')
+                  if (fa < fb) return -1
+                  if (fa > fb) return 1
+                  return a.row - b.row
+                })
+                offendingByDevice.push({ device: dev, rows: deduped })
+              }
+            })
+
+            if (offendingByDevice.length) {
+              setWarning({ type: 'duplicate-fields', detail: { message: 'Duplicate fields detected (warning only).', offendingByDevice } })
+            } else {
+              setWarning(null)
+            }
+          } catch (e) {
+            // ignore duplicate detection errors
+            setWarning(null)
+          }
+        }
+
         // auto-advance to next step unless we're at the last step
         if (step < totalSteps) {
           const next = step + 1
@@ -522,14 +618,6 @@ export default function StepperPage({ initialState, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-
-  function handleStep1Complete(assignments) {
-    // set kode mapping and immediately apply transformations using the provided assignments
-    setKodeMap(assignments)
-    applyBetweenSteps(assignments)
-    setStep(2)
-  }
-
   return (
     <Box>
       <Card variant="outlined">
@@ -538,8 +626,6 @@ export default function StepperPage({ initialState, onBack }) {
           <Typography variant="body2" color="text.secondary">{stepDescriptions[step]}</Typography>
           <LinearProgress variant="determinate" value={Math.round(((step-1)/(totalSteps-1))*100)} sx={{ my: 1 }} />
           {/* errors are now shown inside each failed check card only */}
-
-          {step === 1 && <Step1 df={df} mapping={mapping} onComplete={handleStep1Complete} />}
 
           {/* Render all step sections on a single page; each step has its own check cards that are revealed when the user advances to that step. */}
           <Box sx={{ mt: 2 }}>
@@ -576,6 +662,12 @@ export default function StepperPage({ initialState, onBack }) {
           </Box>
         </CardContent>
       </Card>
+
+        {warning && (
+          <Box sx={{ mt: 2 }}>
+            <WarningPanel warning={warning} spCol={mapping.slotpath} pnCol={mapping.pointName} fCol={mapping.field} />
+          </Box>
+        )}
 
       <Box sx={{ mt: 2 }}>
         <Card variant="outlined">
