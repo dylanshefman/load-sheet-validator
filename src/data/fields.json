@@ -1,0 +1,9 @@
+[
+  {"canonical_type":"IOREADER","order":1,"field":"high_priority_alarm","base_group":"Alarms","supported_kinds":"Bool;Str","multi":true},
+  {"canonical_type":"IOREADER","order":2,"field":"connection_status","base_group":"Connection Status","supported_kinds":"Bool;Str","multi":false},
+  {"canonical_type":"ahu","order":4,"field":"zone_air_temperature_sensor","base_group":"Zone Temperature Controls","supported_kinds":"Number","multi":false},
+  {"canonical_type":"ahu","order":12,"field":"discharge_fan_speed_percentage_command","base_group":"Fans Group","supported_kinds":"Number","multi":false},
+  {"canonical_type":"ahu","order":49,"field":"zone_air_temperature_setpoint","base_group":"Zone Temperature Controls","supported_kinds":"Number","multi":false},
+  {"canonical_type":"airQuality","order":2,"field":"co_concentration_detection_sensor","base_group":"CO Level Control","supported_kinds":"Number","multi":true},
+  {"canonical_type":"IOREADER","order":6,"field":"internal_air_temperature_sensor","base_group":"Internal Air Temperature Monitoring","supported_kinds":"Number","multi":false}
+]
