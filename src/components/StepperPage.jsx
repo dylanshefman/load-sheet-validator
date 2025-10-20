@@ -3,15 +3,18 @@ import * as dfd from 'danfojs'
 import { Box, Button, Typography, Grid, Select, MenuItem, FormControl, InputLabel, Paper, LinearProgress, Card, CardContent, CircularProgress, Stack } from '@mui/material'
 import PreviewTable from './PreviewTable'
 import ErrorPanel from './ErrorPanel'
+import StepStatusCard from './StepStatusCard'
+import { createPortal } from 'react-dom'
 import { decodeSlotpath } from '../utils/decode'
 import Papa from 'papaparse'
 import CheckCard from './CheckCard'
 import { mkKey, buildErrorForCheck, getRecordsArray, exportCSV, downloadOffendingRows, downloadCleanedTable } from './stepperHelpers'
 import WarningPanel from './WarningPanel'
+import SuccessPanel from './SuccessPanel'
 
 const KODE_OPTIONS = ['Number', 'Bool', 'Str', '-']
 
-export default function StepperPage({ initialState, onBack }) {
+export default function StepperPage({ initialState, onBack, onProceedToExport }) {
   // start at step 2 since point-type mapping moved to UploadPage
   const [step, setStep] = useState(2)
   const [df, setDf] = useState(initialState.df)
@@ -633,15 +636,30 @@ export default function StepperPage({ initialState, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // compute whether current step's checks have all passed (and no errors) so we can show the success card
+  let showSuccess = false
+  try {
+    const currentChecks = getChecksForStep(step)
+    const allPassed = currentChecks.length ? currentChecks.every(c => checkStatuses[c.key] && checkStatuses[c.key].status === 'passed') : false
+    showSuccess = !errors && !running && allPassed
+  } catch (e) { showSuccess = false }
+
   return (
     <Box>
-      <Card variant="outlined">
+      {/* render the top-level step status card into the slot in App.jsx */}
+      {typeof document !== 'undefined' ? (() => {
+        const slot = document.getElementById('step-status-slot')
+        if (slot) {
+          return createPortal(
+            <StepStatusCard step={step} totalSteps={totalSteps} stepDescriptions={stepDescriptions} />,
+            slot
+          )
+        }
+        return null
+      })() : null}
+      {/* step checks as their own top-level card */}
+      <Card variant="outlined" sx={{ mb: 2 }}>
         <CardContent>
-          <Typography variant="h6">Step {step}</Typography>
-          <Typography variant="body2" color="text.secondary">{stepDescriptions[step]}</Typography>
-          <LinearProgress variant="determinate" value={Math.round(((step-1)/(totalSteps-1))*100)} sx={{ my: 1 }} />
-          {/* errors are now shown inside each failed check card only */}
-
           {/* Render all step sections on a single page; each step has its own check cards that are revealed when the user advances to that step. */}
           <Box sx={{ mt: 2 }}>
             {[2,3,4,5].filter(s => s <= totalSteps).map(s => (
@@ -661,81 +679,32 @@ export default function StepperPage({ initialState, onBack }) {
               </Box>
             ))}
 
-            <Box sx={{ display: 'flex', gap: 2, mt: 2, alignItems: 'center' }}>
-              <Button variant="outlined" onClick={onBack}>Back to Upload</Button>
-              <Button variant="contained" onClick={async () => {
-                // allow Next only if current step's checks have all passed and none failed
-                if (running) return
-                const currentChecks = getChecksForStep(step)
-                const anyFailed = currentChecks.some(c => checkStatuses[c.key] && checkStatuses[c.key].status === 'failed')
-                const allPassed = currentChecks.every(c => checkStatuses[c.key] && checkStatuses[c.key].status === 'passed')
-                if (!allPassed || anyFailed) return
-                const next = Math.min(totalSteps, step+1)
-                setStep(next)
-              }}>Next</Button>
-            </Box>
           </Box>
         </CardContent>
       </Card>
 
-      {/* compute whether current step's checks have all passed (and no errors) so we can show the success box */}
-      {/* Note: getChecksForStep is synchronous and reads current df state */}
-      {(() => {
-        try {
-          const currentChecks = getChecksForStep(step)
-          const allPassed = currentChecks.length ? currentChecks.every(c => checkStatuses[c.key] && checkStatuses[c.key].status === 'passed') : false
-          const showSuccess = !errors && !running && allPassed
+      {/* warning panel renders its own Paper and is top-level */}
+      {warning && (
+        <Box sx={{ mb: 2 }}>
+          <WarningPanel warning={warning} spCol={mapping.slotpath} pnCol={mapping.pointName} fCol={mapping.field} />
+        </Box>
+      )}
 
-          if (warning) {
-            return (
-              <Box sx={{ mt: 2 }}>
-                <WarningPanel warning={warning} spCol={mapping.slotpath} pnCol={mapping.pointName} fCol={mapping.field} />
-                {showSuccess && (
-                  <Box sx={{ mt: 2 }}>
-                    <Paper sx={{ p: 2, background: '#e8f5e9', color: '#1b5e20', border: '1px solid #a5d6a7' }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
-                        <Typography variant="body1" sx={{ fontWeight: 600 }}>All checks passed</Typography>
-                        <Box sx={{ display: 'flex', gap: 1 }}>
-                          <Button variant="contained" color="success" onClick={() => { /* noop for now */ }}>Proceed to export</Button>
-                        </Box>
-                      </Box>
-                    </Paper>
-                  </Box>
-                )}
-              </Box>
-            )
-          }
+      {/* success panel rendered as its own top-level component */}
+      {showSuccess && (
+        <Box sx={{ mb: 2 }}>
+          <SuccessPanel onProceed={() => {
+            try {
+              // pass the current filtered df back to the app for export
+              const finalDf = df
+              if (typeof onProceedToExport === 'function') onProceedToExport(finalDf)
+            } catch (e) {
+              if (typeof onProceedToExport === 'function') onProceedToExport(df)
+            }
+          }} />
+        </Box>
+      )}
 
-          // no warning: render success box just below the check container
-          return (
-            <React.Fragment>
-              {showSuccess && (
-                <Box sx={{ mt: 2 }}>
-                  <Paper sx={{ p: 2, background: '#e8f5e9', color: '#1b5e20', border: '1px solid #a5d6a7' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
-                      <Typography variant="body1" sx={{ fontWeight: 600 }}>All checks passed</Typography>
-                      <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Button variant="contained" color="success" onClick={() => { /* noop for now */ }}>Proceed to export</Button>
-                      </Box>
-                    </Box>
-                  </Paper>
-                </Box>
-              )}
-            </React.Fragment>
-          )
-        } catch (e) { return null }
-      })()}
-
-      <Box sx={{ mt: 2 }}>
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="h6">Preview</Typography>
-                  <Box sx={{ mt: 1 }}>
-                    <PreviewTable rows={df} />
-                  </Box>
-          </CardContent>
-        </Card>
-      </Box>
     </Box>
   )
 }

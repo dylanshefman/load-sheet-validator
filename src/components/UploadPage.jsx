@@ -142,9 +142,10 @@ export default function UploadPage({ onNext }) {
   function inferKodeForType(t) {
     if (!t && t !== 0) return '-'
     const s = String(t).toLowerCase()
+    if (s.includes('kit')) return '-'
     if (s.includes('numeric')) return 'Number'
-    if (s.includes('bool') || s.includes('enum')) return 'Bool'
-    if (s.includes('string')) return 'Str'
+    if (s.includes('bool')) return 'Bool'
+    if (s.includes('string') || s.includes('enum')) return 'Str'
     return '-'
   }
 
