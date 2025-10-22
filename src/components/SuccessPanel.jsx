@@ -10,7 +10,7 @@ export default function SuccessPanel({ onProceed = () => {} }) {
           <Typography variant="body2" sx={{ mt: 0.5 }}>All checks passed for this step.</Typography>
         </Box>
         <Box>
-          <Button variant="contained" color="success" onClick={onProceed}>Proceed to export</Button>
+          <Button variant="contained" color="success" onClick={onProceed}>Proceed to Facet Mapping</Button>
         </Box>
       </Box>
     </Paper>
